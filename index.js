@@ -10,7 +10,7 @@ app.use(express.urlencoded({ extended: true }));
 // Mock database in-memory
 const users = [];
 
-// Endpoint API Registrasi
+// Endpoint Registrasi
 app.post('/api/register', (req, res) => {
   const { phone, password, shareCode } = req.body || {};
 
@@ -28,7 +28,8 @@ app.post('/api/register', (req, res) => {
     });
   }
 
-  const existingUser = users.find((u) => u.phone === phone);
+  const cleanPhone = phone.replace(/\s+/g, '');
+  const existingUser = users.find((u) => u.phone === cleanPhone);
   if (existingUser) {
     return res.status(409).json({
       success: false,
@@ -38,8 +39,11 @@ app.post('/api/register', (req, res) => {
 
   const newUser = {
     id: users.length + 1,
-    phone,
-    shareCode: shareCode || null,
+    phone: cleanPhone,
+    password,
+    shareCode: shareCode ? shareCode.trim().toUpperCase() : null,
+    userReferralCode: 'ID' + Math.floor(100000 + Math.random() * 900000),
+    balance: 0,
     registeredAt: new Date().toISOString()
   };
 
@@ -47,246 +51,374 @@ app.post('/api/register', (req, res) => {
 
   return res.status(201).json({
     success: true,
-    message: 'Registrasi akun berhasil!',
+    message: 'Registrasi berhasil! Silakan masuk.',
     data: {
       id: newUser.id,
       phone: newUser.phone,
-      shareCode: newUser.shareCode
+      shareCode: newUser.shareCode,
+      userReferralCode: newUser.userReferralCode
     }
   });
 });
 
-// Frontend HTML Landing Page
+// Endpoint Login
+app.post('/api/login', (req, res) => {
+  const { phone, password } = req.body || {};
+
+  if (!phone || !password) {
+    return res.status(400).json({
+      success: false,
+      message: 'Nomor handphone dan kata sandi wajib diisi.'
+    });
+  }
+
+  const cleanPhone = phone.replace(/\s+/g, '');
+  const user = users.find((u) => u.phone === cleanPhone && u.password === password);
+
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Nomor handphone atau kata sandi salah.'
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Login berhasil!',
+    data: {
+      id: user.id,
+      phone: user.phone,
+      balance: user.balance,
+      userReferralCode: user.userReferralCode
+    }
+  });
+});
+
+// Frontend UI iOS Cupertino Style
 const htmlContent = `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Indoinvestma - Program Kemitraan Resmi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Indoinvestma</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     body {
-      background-color: #0b1120;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+      background-color: #000000;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .ios-blur {
+      backdrop-filter: blur(25px);
+      -webkit-backdrop-filter: blur(25px);
+    }
+    .ios-card {
+      background-color: #1c1c1e;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .ios-input-group {
+      background-color: #2c2c2e;
+    }
+    .ios-separator {
+      height: 0.5px;
+      background-color: rgba(255, 255, 255, 0.12);
+      margin-left: 52px;
     }
   </style>
 </head>
-<body class="text-slate-100 flex justify-center min-h-screen">
-  <main class="w-full max-w-md bg-slate-900 min-h-screen flex flex-col shadow-2xl border-x border-slate-800">
-    
-    <div class="relative bg-gradient-to-br from-amber-500 via-amber-600 to-yellow-600 p-6 rounded-b-[2.5rem] shadow-xl text-slate-950">
-      <div class="flex items-center justify-between mb-4">
-        <div class="flex items-center space-x-2">
-          <div class="w-10 h-10 rounded-xl bg-slate-950 flex items-center justify-center font-black text-amber-400 text-lg border border-amber-300/40">
+<body class="text-white flex justify-center min-h-screen">
+  <div class="w-full max-w-md bg-black min-h-screen flex flex-col justify-between pb-8 select-none">
+
+    <!-- iOS Status Bar & Top Navigation -->
+    <header class="sticky top-0 z-30 ios-blur bg-black/75 border-b border-white/10 px-5 pt-3 pb-3">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-500 to-yellow-300 flex items-center justify-center text-black font-black text-sm shadow-md">
             IM
           </div>
-          <div>
-            <h1 class="text-lg font-black tracking-wider leading-none">INDOINVESTMA</h1>
-            <span class="text-[10px] font-bold uppercase tracking-widest text-slate-900">Official Partnership</span>
-          </div>
+          <span class="font-semibold text-base tracking-tight text-white">Indoinvestma</span>
         </div>
-        <span class="bg-slate-950/15 border border-slate-950/20 text-slate-950 text-[11px] px-2.5 py-0.5 rounded-full font-bold">
-          VIP Invite
+        <span class="text-[12px] font-medium text-amber-400 bg-amber-400/10 px-2.5 py-1 rounded-full border border-amber-400/20">
+          Official VIP
         </span>
       </div>
+    </header>
 
-      <div class="mt-4">
-        <h2 class="text-2xl font-black leading-tight">Undangan Eksklusif Portofolio Mitra</h2>
-        <p class="text-xs font-semibold mt-1 opacity-90">Daftarkan akun dan klaim akses portofolio aset Anda sekarang.</p>
-      </div>
-    </div>
+    <main class="flex-1 px-5 pt-4 space-y-5">
 
-    <div class="px-5 -mt-5">
-      <div class="bg-slate-800/95 backdrop-blur border border-slate-700 p-3.5 rounded-2xl flex items-center justify-between shadow-lg">
-        <div class="flex items-center space-x-3">
-          <div class="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
-            <i class="fa-solid fa-ticket"></i>
+      <!-- iOS App Banner Card -->
+      <section class="ios-card rounded-3xl p-5 relative overflow-hidden shadow-2xl">
+        <div class="absolute -right-8 -top-8 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none"></div>
+        <p class="text-[11px] font-semibold tracking-wider uppercase text-amber-400">Akses Kemitraan Eksklusif</p>
+        <h1 class="text-2xl font-bold tracking-tight mt-1 text-white leading-tight">Portofolio Digital Mitra</h1>
+        <p class="text-xs text-neutral-400 mt-1.5 leading-relaxed">
+          Kelola aset dan nikmati bagi hasil terverifikasi melalui ekosistem investasi modern.
+        </p>
+
+        <!-- Referral Tag (iOS Badge Style) -->
+        <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-link text-xs text-neutral-400"></i>
+            <span class="text-xs text-neutral-400 font-normal">Undangan Referral:</span>
           </div>
-          <div>
-            <p class="text-[11px] text-slate-400 font-medium">Kode Undangan Terverifikasi</p>
-            <p id="badgeCode" class="text-sm font-bold text-amber-400 font-mono tracking-widest">-</p>
-          </div>
+          <span id="badgeCode" class="font-mono text-xs font-semibold px-2 py-0.5 rounded-md bg-white/10 text-amber-300 tracking-wider">
+            -
+          </span>
         </div>
-        <span class="text-[11px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-md font-bold">
-          Valid
-        </span>
-      </div>
-    </div>
+      </section>
 
-    <div class="px-6 py-6 flex-1 flex flex-col justify-between">
-      <form id="regForm" class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Nomor Handphone</label>
-          <div class="relative">
-            <span class="absolute left-3.5 top-3.5 text-slate-400 text-sm font-semibold">+62</span>
+      <!-- iOS Segmented Control (Daftar / Masuk) -->
+      <div class="bg-[#1c1c1e] p-1 rounded-2xl flex border border-white/5">
+        <button 
+          id="tabRegister" 
+          type="button" 
+          class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 bg-[#2c2c2e] text-white shadow-sm"
+        >
+          Daftar Akun
+        </button>
+        <button 
+          id="tabLogin" 
+          type="button" 
+          class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 text-neutral-400"
+        >
+          Masuk
+        </button>
+      </div>
+
+      <!-- iOS Inset Grouped Form -->
+      <form id="authForm" class="space-y-4">
+        <div class="ios-card rounded-2xl overflow-hidden">
+          
+          <!-- Field: Phone Number -->
+          <div class="flex items-center px-4 py-3.5">
+            <div class="w-6 text-center text-neutral-400">
+              <i class="fa-solid fa-phone text-sm"></i>
+            </div>
+            <span class="text-sm font-semibold text-neutral-300 ml-3 mr-2">+62</span>
             <input 
               type="tel" 
-              id="phone" 
+              id="phoneInput" 
               placeholder="81234567890" 
               required
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-14 pr-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+              class="flex-1 bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none font-normal"
             >
           </div>
-        </div>
 
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Kata Sandi Akun</label>
-          <div class="relative">
+          <div class="ios-separator"></div>
+
+          <!-- Field: Password -->
+          <div class="flex items-center px-4 py-3.5 relative">
+            <div class="w-6 text-center text-neutral-400">
+              <i class="fa-solid fa-lock text-sm"></i>
+            </div>
             <input 
               type="password" 
-              id="password" 
-              placeholder="Minimal 6 karakter" 
+              id="passwordInput" 
+              placeholder="Kata Sandi (min. 6 karakter)" 
               required
-              class="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-4 pr-11 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 transition"
+              class="flex-1 bg-transparent text-sm text-white placeholder-neutral-500 focus:outline-none pl-3 pr-8 font-normal"
             >
             <button 
               type="button" 
-              id="btnTogglePass" 
-              class="absolute right-3.5 top-3.5 text-slate-400 hover:text-slate-200 text-sm"
+              id="togglePassword" 
+              class="absolute right-4 text-neutral-400 hover:text-white transition"
             >
-              <i class="fa-regular fa-eye"></i>
+              <i class="fa-regular fa-eye text-sm"></i>
             </button>
           </div>
+
+          <!-- Field: Share Code (Hanya saat Register) -->
+          <div id="referralRow">
+            <div class="ios-separator"></div>
+            <div class="flex items-center px-4 py-3.5">
+              <div class="w-6 text-center text-amber-400">
+                <i class="fa-solid fa-ticket text-sm"></i>
+              </div>
+              <input 
+                type="text" 
+                id="shareCodeInput" 
+                placeholder="Kode Undangan (Opsional)" 
+                class="flex-1 bg-transparent text-sm text-amber-300 font-mono tracking-widest placeholder-neutral-500 focus:outline-none pl-3 uppercase"
+              >
+            </div>
+          </div>
+
         </div>
 
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1.5">Kode Referral</label>
-          <input 
-            type="text" 
-            id="shareCode" 
-            placeholder="KODE REFERRAL" 
-            class="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 px-4 text-sm text-amber-400 font-mono tracking-widest placeholder-slate-500 focus:outline-none focus:border-amber-500 transition uppercase"
-          >
-        </div>
+        <!-- Feedback Notification Pill -->
+        <div id="feedbackBox" class="hidden text-xs px-4 py-3 rounded-xl font-medium text-center transition"></div>
 
-        <div id="alertBox" class="hidden text-xs p-3 rounded-xl border font-medium"></div>
-
+        <!-- iOS Main Action Button -->
         <button 
           type="submit" 
           id="btnSubmit" 
-          class="w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-slate-950 font-extrabold py-3.5 rounded-xl shadow-lg shadow-amber-500/20 text-sm flex items-center justify-center space-x-2 transition active:scale-[0.98]"
+          class="w-full bg-gradient-to-r from-amber-500 via-amber-400 to-yellow-400 hover:opacity-95 text-black font-semibold py-3.5 rounded-2xl text-[16px] tracking-tight shadow-lg transition active:scale-[0.98] flex items-center justify-center space-x-2"
         >
-          <span>Daftar Sekarang</span>
-          <i class="fa-solid fa-arrow-right text-xs"></i>
+          <span id="btnText">Daftar Sekarang</span>
         </button>
       </form>
 
-      <div class="pt-6 border-t border-slate-800 mt-6 space-y-4 text-center">
-        <div class="grid grid-cols-3 gap-2 text-slate-400 text-[11px]">
-          <div class="flex flex-col items-center">
-            <i class="fa-solid fa-lock text-amber-400 mb-1"></i>
-            <span>Terenkripsi</span>
+      <!-- iOS Security & Trust Callout -->
+      <div class="pt-2 text-center">
+        <div class="flex items-center justify-center space-x-4 text-neutral-400 text-xs">
+          <div class="flex items-center space-x-1.5">
+            <i class="fa-solid fa-shield-halved text-[11px] text-amber-400"></i>
+            <span>Enkripsi 256-Bit</span>
           </div>
-          <div class="flex flex-col items-center">
-            <i class="fa-solid fa-bolt text-amber-400 mb-1"></i>
-            <span>Instan</span>
-          </div>
-          <div class="flex flex-col items-center">
-            <i class="fa-solid fa-shield-halved text-amber-400 mb-1"></i>
-            <span>Privasi Aman</span>
+          <span class="text-neutral-600">•</span>
+          <div class="flex items-center space-x-1.5">
+            <i class="fa-solid fa-fingerprint text-[11px] text-amber-400"></i>
+            <span>Aman & Privat</span>
           </div>
         </div>
-        <p class="text-[11px] text-slate-500">
-          Sudah punya akun? <a href="#" class="text-amber-400 hover:underline">Masuk</a>
-        </p>
       </div>
-    </div>
 
-  </main>
+    </main>
+
+    <!-- Footer Caption -->
+    <footer class="text-center px-5 pt-4">
+      <p class="text-[11px] text-neutral-500">
+        © 2026 Indoinvestma Technologies. All rights reserved.
+      </p>
+    </footer>
+
+  </div>
 
   <script>
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('shareCode') || params.get('ref') || '';
+    const urlParams = new URLSearchParams(window.location.search);
+    const codeFromUrl = urlParams.get('shareCode') || urlParams.get('ref') || '';
 
-    const shareCodeInput = document.getElementById('shareCode');
+    const tabRegister = document.getElementById('tabRegister');
+    const tabLogin = document.getElementById('tabLogin');
+    const referralRow = document.getElementById('referralRow');
     const badgeCode = document.getElementById('badgeCode');
-    const regForm = document.getElementById('regForm');
-    const alertBox = document.getElementById('alertBox');
+    const shareCodeInput = document.getElementById('shareCodeInput');
+    const phoneInput = document.getElementById('phoneInput');
+    const passwordInput = document.getElementById('passwordInput');
+    const togglePassword = document.getElementById('togglePassword');
+    const authForm = document.getElementById('authForm');
     const btnSubmit = document.getElementById('btnSubmit');
-    const passInput = document.getElementById('password');
-    const btnTogglePass = document.getElementById('btnTogglePass');
+    const btnText = document.getElementById('btnText');
+    const feedbackBox = document.getElementById('feedbackBox');
 
-    if (code) {
-      shareCodeInput.value = code;
-      badgeCode.textContent = code;
+    let isRegisterMode = true;
+
+    if (codeFromUrl) {
+      shareCodeInput.value = codeFromUrl;
+      badgeCode.textContent = codeFromUrl;
     } else {
-      badgeCode.textContent = 'TIDAK ADA';
-      badgeCode.classList.replace('text-amber-400', 'text-slate-500');
+      badgeCode.textContent = 'NON-REFERRAL';
+      badgeCode.classList.replace('text-amber-300', 'text-neutral-500');
     }
 
     shareCodeInput.addEventListener('input', (e) => {
       const val = e.target.value.trim().toUpperCase();
-      badgeCode.textContent = val || 'TIDAK ADA';
-      if (val) {
-        badgeCode.classList.replace('text-slate-500', 'text-amber-400');
-      } else {
-        badgeCode.classList.replace('text-amber-400', 'text-slate-500');
-      }
+      badgeCode.textContent = val || 'NON-REFERRAL';
     });
 
-    btnTogglePass.addEventListener('click', () => {
-      const isPass = passInput.type === 'password';
-      passInput.type = isPass ? 'text' : 'password';
-      btnTogglePass.innerHTML = isPass ? '<i class="fa-regular fa-eye-slash"></i>' : '<i class="fa-regular fa-eye"></i>';
+    // Tab Switcher Handler
+    tabRegister.addEventListener('click', () => {
+      if (isRegisterMode) return;
+      isRegisterMode = true;
+      tabRegister.className = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 bg-[#2c2c2e] text-white shadow-sm';
+      tabLogin.className = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 text-neutral-400';
+      referralRow.classList.remove('hidden');
+      btnText.textContent = 'Daftar Sekarang';
+      feedbackBox.classList.add('hidden');
     });
 
-    regForm.addEventListener('submit', async (e) => {
+    tabLogin.addEventListener('click', () => {
+      if (!isRegisterMode) return;
+      isRegisterMode = false;
+      tabLogin.className = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 bg-[#2c2c2e] text-white shadow-sm';
+      tabRegister.className = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-200 text-neutral-400';
+      referralRow.classList.add('hidden');
+      btnText.textContent = 'Masuk ke Akun';
+      feedbackBox.classList.add('hidden');
+    });
+
+    // Toggle Password Visibility
+    togglePassword.addEventListener('click', () => {
+      const isPass = passwordInput.type === 'password';
+      passwordInput.type = isPass ? 'text' : 'password';
+      togglePassword.innerHTML = isPass ? '<i class="fa-regular fa-eye-slash text-sm"></i>' : '<i class="fa-regular fa-eye text-sm"></i>';
+    });
+
+    // Submit Request
+    authForm.addEventListener('submit', async (e) => {
       e.preventDefault();
-      alertBox.classList.add('hidden');
+      feedbackBox.classList.add('hidden');
 
-      let rawPhone = document.getElementById('phone').value.trim();
+      let rawPhone = phoneInput.value.trim();
       if (rawPhone.startsWith('0')) rawPhone = rawPhone.substring(1);
       const fullPhone = '+62' + rawPhone;
-      const password = passInput.value;
+      const password = passwordInput.value;
       const shareCode = shareCodeInput.value.trim();
 
       btnSubmit.disabled = true;
-      btnSubmit.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Memproses...</span>';
+      btnSubmit.classList.add('opacity-70');
+      btnText.textContent = 'Memproses...';
+
+      const targetEndpoint = isRegisterMode ? '/api/register' : '/api/login';
+      const payload = isRegisterMode 
+        ? { phone: fullPhone, password, shareCode } 
+        : { phone: fullPhone, password };
 
       try {
-        const res = await fetch('/api/register', {
+        const response = await fetch(targetEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: fullPhone, password, shareCode })
+          body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
+        const result = await response.json();
 
-        if (!res.ok) {
-          throw new Error(data.message || 'Registrasi gagal.');
+        if (!response.ok) {
+          throw new Error(result.message || 'Terjadi kesalahan sistem.');
         }
 
-        alertBox.className = 'text-xs p-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
-        alertBox.textContent = data.message;
-        alertBox.classList.remove('hidden');
+        feedbackBox.className = 'text-xs px-4 py-3 rounded-xl font-medium text-center bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        feedbackBox.textContent = result.message;
+        feedbackBox.classList.remove('hidden');
 
-        setTimeout(() => {
-          regForm.reset();
-          btnSubmit.innerHTML = '<span>Pendaftaran Berhasil</span>';
-        }, 1200);
+        if (isRegisterMode) {
+          setTimeout(() => {
+            tabLogin.click();
+          }, 1500);
+        } else {
+          localStorage.setItem('indoinvestma_user', JSON.stringify(result.data));
+          btnText.textContent = 'Akses Diberikan';
+        }
 
       } catch (err) {
-        alertBox.className = 'text-xs p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300';
-        alertBox.textContent = err.message;
-        alertBox.classList.remove('hidden');
+        feedbackBox.className = 'text-xs px-4 py-3 rounded-xl font-medium text-center bg-rose-500/10 text-rose-400 border border-rose-500/20';
+        feedbackBox.textContent = err.message;
+        feedbackBox.classList.remove('hidden');
+      } finally {
         btnSubmit.disabled = false;
-        btnSubmit.innerHTML = '<span>Daftar Sekarang</span><i class="fa-solid fa-arrow-right text-xs"></i>';
+        btnSubmit.classList.remove('opacity-70');
+        if (btnText.textContent === 'Memproses...') {
+          btnText.textContent = isRegisterMode ? 'Daftar Sekarang' : 'Masuk ke Akun';
+        }
       }
     });
   </script>
 </body>
 </html>`;
 
+// Routing halaman utama
 app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(htmlContent);
 });
 
+// Listener untuk eksekusi lokal
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at http://localhost:${PORT}`);
+    console.log(`Indoinvestma running at http://localhost:${PORT}`);
   });
 }
 
