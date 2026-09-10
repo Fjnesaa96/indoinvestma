@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 
@@ -7,11 +9,20 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Mock database in-memory
-const users = [];
+// Inisialisasi Supabase Client
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+const supabase = (SUPABASE_URL && SUPABASE_KEY) 
+  ? createClient(SUPABASE_URL, SUPABASE_KEY) 
+  : null;
 
-// Endpoint Registrasi
-app.post('/api/register', (req, res) => {
+// Helper generate kode referral unik
+function generateReferralCode() {
+  return 'ID' + Math.floor(100000 + Math.random() * 900000);
+}
+
+// Endpoint Registrasi Akun
+app.post('/api/register', async (req, res) => {
   const { phone, password, shareCode } = req.body || {};
 
   if (!phone || !password) {
@@ -29,40 +40,78 @@ app.post('/api/register', (req, res) => {
   }
 
   const cleanPhone = phone.replace(/\s+/g, '');
-  const existingUser = users.find((u) => u.phone === cleanPhone);
-  if (existingUser) {
-    return res.status(409).json({
+
+  if (!supabase) {
+    return res.status(500).json({
       success: false,
-      message: 'Nomor handphone sudah terdaftar.'
+      message: 'Database belum dikonfigurasi (SUPABASE_URL / SUPABASE_KEY kosong).'
     });
   }
 
-  const newUser = {
-    id: users.length + 1,
-    phone: cleanPhone,
-    password,
-    shareCode: shareCode ? shareCode.trim().toUpperCase() : null,
-    userReferralCode: 'ID' + Math.floor(100000 + Math.random() * 900000),
-    balance: 0,
-    registeredAt: new Date().toISOString()
-  };
+  try {
+    // 1. Cek nomor handphone duplikat
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone', cleanPhone)
+      .maybeSingle();
 
-  users.push(newUser);
-
-  return res.status(201).json({
-    success: true,
-    message: 'Registrasi berhasil! Silakan masuk.',
-    data: {
-      id: newUser.id,
-      phone: newUser.phone,
-      shareCode: newUser.shareCode,
-      userReferralCode: newUser.userReferralCode
+    if (checkError) {
+      throw checkError;
     }
-  });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: 'Nomor handphone sudah terdaftar.'
+      });
+    }
+
+    // 2. Hash kata sandi
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    // 3. Simpan user baru ke database
+    const userReferralCode = generateReferralCode();
+    const { data: newUser, error: insertError } = await supabase
+      .from('users')
+      .insert([
+        {
+          phone: cleanPhone,
+          password_hash: passwordHash,
+          share_code: shareCode ? shareCode.trim().toUpperCase() : null,
+          user_referral_code: userReferralCode,
+          balance: 0
+        }
+      ])
+      .select('id, phone, share_code, user_referral_code, balance, created_at')
+      .single();
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: 'Registrasi berhasil! Silakan masuk ke akun.',
+      data: {
+        id: newUser.id,
+        phone: newUser.phone,
+        shareCode: newUser.share_code,
+        userReferralCode: newUser.user_referral_code
+      }
+    });
+
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Gagal memproses registrasi: ' + (err.message || 'Server error')
+    });
+  }
 });
 
-// Endpoint Login
-app.post('/api/login', (req, res) => {
+// Endpoint Login Akun
+app.post('/api/login', async (req, res) => {
   const { phone, password } = req.body || {};
 
   if (!phone || !password) {
@@ -73,28 +122,62 @@ app.post('/api/login', (req, res) => {
   }
 
   const cleanPhone = phone.replace(/\s+/g, '');
-  const user = users.find((u) => u.phone === cleanPhone && u.password === password);
 
-  if (!user) {
-    return res.status(401).json({
+  if (!supabase) {
+    return res.status(500).json({
       success: false,
-      message: 'Nomor handphone atau kata sandi salah.'
+      message: 'Database belum dikonfigurasi (SUPABASE_URL / SUPABASE_KEY kosong).'
     });
   }
 
-  return res.status(200).json({
-    success: true,
-    message: 'Login berhasil!',
-    data: {
-      id: user.id,
-      phone: user.phone,
-      balance: user.balance,
-      userReferralCode: user.userReferralCode
+  try {
+    // 1. Ambil data user berdasarkan nomor handphone
+    const { data: user, error: fetchError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('phone', cleanPhone)
+      .maybeSingle();
+
+    if (fetchError) {
+      throw fetchError;
     }
-  });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Nomor handphone atau kata sandi salah.'
+      });
+    }
+
+    // 2. Verifikasi hash kata sandi
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Nomor handphone atau kata sandi salah.'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Login berhasil!',
+      data: {
+        id: user.id,
+        phone: user.phone,
+        balance: user.balance,
+        userReferralCode: user.user_referral_code
+      }
+    });
+
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Gagal memproses login: ' + (err.message || 'Server error')
+    });
+  }
 });
 
-// Frontend UI iOS Cupertino Style
+// UI Frontend iOS Cupertino Style
 const htmlContent = `<!DOCTYPE html>
 <html lang="id">
 <head>
@@ -118,9 +201,6 @@ const htmlContent = `<!DOCTYPE html>
       background-color: #1c1c1e;
       border: 1px solid rgba(255, 255, 255, 0.08);
     }
-    .ios-input-group {
-      background-color: #2c2c2e;
-    }
     .ios-separator {
       height: 0.5px;
       background-color: rgba(255, 255, 255, 0.12);
@@ -131,7 +211,7 @@ const htmlContent = `<!DOCTYPE html>
 <body class="text-white flex justify-center min-h-screen">
   <div class="w-full max-w-md bg-black min-h-screen flex flex-col justify-between pb-8 select-none">
 
-    <!-- iOS Status Bar & Top Navigation -->
+    <!-- Top Navigation -->
     <header class="sticky top-0 z-30 ios-blur bg-black/75 border-b border-white/10 px-5 pt-3 pb-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center space-x-2.5">
@@ -148,7 +228,7 @@ const htmlContent = `<!DOCTYPE html>
 
     <main class="flex-1 px-5 pt-4 space-y-5">
 
-      <!-- iOS App Banner Card -->
+      <!-- Hero Card -->
       <section class="ios-card rounded-3xl p-5 relative overflow-hidden shadow-2xl">
         <div class="absolute -right-8 -top-8 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none"></div>
         <p class="text-[11px] font-semibold tracking-wider uppercase text-amber-400">Akses Kemitraan Eksklusif</p>
@@ -157,7 +237,6 @@ const htmlContent = `<!DOCTYPE html>
           Kelola aset dan nikmati bagi hasil terverifikasi melalui ekosistem investasi modern.
         </p>
 
-        <!-- Referral Tag (iOS Badge Style) -->
         <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <i class="fa-solid fa-link text-xs text-neutral-400"></i>
@@ -169,7 +248,7 @@ const htmlContent = `<!DOCTYPE html>
         </div>
       </section>
 
-      <!-- iOS Segmented Control (Daftar / Masuk) -->
+      <!-- Segmented Switcher -->
       <div class="bg-[#1c1c1e] p-1 rounded-2xl flex border border-white/5">
         <button 
           id="tabRegister" 
@@ -187,11 +266,10 @@ const htmlContent = `<!DOCTYPE html>
         </button>
       </div>
 
-      <!-- iOS Inset Grouped Form -->
+      <!-- Inset Grouped Form -->
       <form id="authForm" class="space-y-4">
         <div class="ios-card rounded-2xl overflow-hidden">
           
-          <!-- Field: Phone Number -->
           <div class="flex items-center px-4 py-3.5">
             <div class="w-6 text-center text-neutral-400">
               <i class="fa-solid fa-phone text-sm"></i>
@@ -208,7 +286,6 @@ const htmlContent = `<!DOCTYPE html>
 
           <div class="ios-separator"></div>
 
-          <!-- Field: Password -->
           <div class="flex items-center px-4 py-3.5 relative">
             <div class="w-6 text-center text-neutral-400">
               <i class="fa-solid fa-lock text-sm"></i>
@@ -229,7 +306,6 @@ const htmlContent = `<!DOCTYPE html>
             </button>
           </div>
 
-          <!-- Field: Share Code (Hanya saat Register) -->
           <div id="referralRow">
             <div class="ios-separator"></div>
             <div class="flex items-center px-4 py-3.5">
@@ -247,10 +323,8 @@ const htmlContent = `<!DOCTYPE html>
 
         </div>
 
-        <!-- Feedback Notification Pill -->
         <div id="feedbackBox" class="hidden text-xs px-4 py-3 rounded-xl font-medium text-center transition"></div>
 
-        <!-- iOS Main Action Button -->
         <button 
           type="submit" 
           id="btnSubmit" 
@@ -260,7 +334,7 @@ const htmlContent = `<!DOCTYPE html>
         </button>
       </form>
 
-      <!-- iOS Security & Trust Callout -->
+      <!-- Trust Indicator -->
       <div class="pt-2 text-center">
         <div class="flex items-center justify-center space-x-4 text-neutral-400 text-xs">
           <div class="flex items-center space-x-1.5">
@@ -277,7 +351,6 @@ const htmlContent = `<!DOCTYPE html>
 
     </main>
 
-    <!-- Footer Caption -->
     <footer class="text-center px-5 pt-4">
       <p class="text-[11px] text-neutral-500">
         © 2026 Indoinvestma Technologies. All rights reserved.
@@ -318,7 +391,6 @@ const htmlContent = `<!DOCTYPE html>
       badgeCode.textContent = val || 'NON-REFERRAL';
     });
 
-    // Tab Switcher Handler
     tabRegister.addEventListener('click', () => {
       if (isRegisterMode) return;
       isRegisterMode = true;
@@ -339,14 +411,12 @@ const htmlContent = `<!DOCTYPE html>
       feedbackBox.classList.add('hidden');
     });
 
-    // Toggle Password Visibility
     togglePassword.addEventListener('click', () => {
       const isPass = passwordInput.type === 'password';
       passwordInput.type = isPass ? 'text' : 'password';
       togglePassword.innerHTML = isPass ? '<i class="fa-regular fa-eye-slash text-sm"></i>' : '<i class="fa-regular fa-eye text-sm"></i>';
     });
 
-    // Submit Request
     authForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       feedbackBox.classList.add('hidden');
@@ -408,13 +478,11 @@ const htmlContent = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// Routing halaman utama
 app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(htmlContent);
 });
 
-// Listener untuk eksekusi lokal
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
   app.listen(PORT, '0.0.0.0', () => {
