@@ -1,39 +1,33 @@
 import React, { useState, useEffect } from 'react';
-import { PieChart, CheckCircle2, Clock, ArrowUpRight, Loader2, AlertCircle } from 'lucide-react';
+import { Briefcase, TrendingUp, Clock, Loader2, AlertCircle, PieChart, ShieldCheck, Timer } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import AlertModal from '../components/modals/AlertModal';
 
 export default function Portfolio() {
-  const [items, setItems] = useState([]);
+  const [investments, setInvestments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState(null);
+  const [processingId, setProcessingId] = useState(null);
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  const [alertConfig, setAlertConfig] = useState({
+    isOpen: false,
+    type: 'success',
+    title: '',
+    message: '',
+  });
 
   const fetchInvestments = async () => {
     try {
       setLoading(true);
-      setErrorMsg(null);
-
       const { data, error } = await supabase
         .from('user_investments')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-
-      const mapped = (data || []).map((inv) => ({
-        id: inv.id,
-        title: inv.title,
-        investedAmount: Number(inv.invested_amount),
-        dailyProfit: Number(inv.daily_profit),
-        daysRemaining: inv.days_remaining,
-        totalDays: inv.total_days,
-        earnedProfit: Number(inv.earned_profit),
-        status: inv.status,
-      }));
-
-      setItems(mapped);
+      setInvestments(data || []);
     } catch (err) {
       console.error('Gagal memuat portofolio:', err.message);
-      setErrorMsg('Gagal memuat daftar portofolio aktif.');
     } finally {
       setLoading(false);
     }
@@ -41,136 +35,286 @@ export default function Portfolio() {
 
   useEffect(() => {
     fetchInvestments();
+    const interval = setInterval(() => setCurrentTime(Date.now()), 10000);
+    return () => clearInterval(interval);
   }, []);
 
-  const totalInvested = items.reduce((acc, curr) => acc + curr.investedAmount, 0);
-  const totalEarned = items.reduce((acc, curr) => acc + curr.earnedProfit, 0);
+  // Ringkasan Portofolio
+  const totalModalAktif = investments.reduce((acc, cur) => acc + Number(cur.invested_amount || 0), 0);
+  const totalProfitTerkumpul = investments.reduce((acc, cur) => acc + Number(cur.earned_profit || 0), 0);
+  const totalNilaiPortofolio = totalModalAktif + totalProfitTerkumpul;
 
-  const handleClaim = async (item) => {
+  // Hitung akumulasi jam klaim profit (35% per 24 jam => 35 / 24 % per jam)
+  const calculateClaimable = (item) => {
+    const invested = Number(item.invested_amount || 0);
+    const hourlyRate = 0.35 / 24; // ~1.4583% per jam
+    const hourlyProfit = Math.floor(invested * hourlyRate);
+
+    const lastClaim = item.last_claimed_at ? new Date(item.last_claimed_at).getTime() : new Date(item.created_at).getTime();
+    const diffMs = currentTime - lastClaim;
+    const hoursElapsed = Math.floor(diffMs / (1000 * 60 * 60));
+
+    const claimableHours = Math.max(0, hoursElapsed);
+    const claimableAmount = claimableHours * hourlyProfit;
+
+    const msUntilNextHour = Math.max(0, 3600000 - (diffMs % 3600000));
+    const minutesLeft = Math.ceil(msUntilNextHour / 60000);
+
+    return {
+      hourlyProfit,
+      claimableHours,
+      claimableAmount,
+      minutesLeft,
+      canClaim: claimableHours >= 1,
+    };
+  };
+
+  const handleClaimProfit = async (item) => {
+    if (processingId) return;
+
+    const { claimableHours, claimableAmount, minutesLeft } = calculateClaimable(item);
+
+    if (claimableHours < 1) {
+      setAlertConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Belum Waktunya Klaim',
+        message: `Profit dihitung per 1 jam penuh. Siklus jam berikutnya siap dalam ±${minutesLeft} menit lagi.`,
+      });
+      return;
+    }
+
     try {
-      const addedProfit = item.dailyProfit;
-      const newEarned = item.earnedProfit + addedProfit;
+      setProcessingId(item.id);
 
-      const { error } = await supabase
+      // 1. Ambil data profil aktif
+      const { data: profileData, error: profileErr } = await supabase
+        .from('profiles')
+        .select('id, balance')
+        .limit(1)
+        .single();
+
+      if (profileErr) throw profileErr;
+
+      const currentBalance = Number(profileData.balance || 0);
+      const newBalance = currentBalance + claimableAmount;
+
+      // 2. Tambah saldo ke profiles
+      const { error: updateBalanceErr } = await supabase
+        .from('profiles')
+        .update({ balance: newBalance })
+        .eq('id', profileData.id);
+
+      if (updateBalanceErr) throw updateBalanceErr;
+
+      // 3. Catat transaksi ke riwayat
+      await supabase.from('transactions').insert([
+        {
+          type: 'profit',
+          amount: claimableAmount,
+          description: `Profit ${claimableHours} Jam (${item.title})`,
+          status: 'success',
+        },
+      ]);
+
+      // 4. Update total profit dan timestamp klaim terakhir
+      const updatedEarned = Number(item.earned_profit || 0) + claimableAmount;
+      const nowIso = new Date().toISOString();
+
+      const { error: updateInvErr } = await supabase
         .from('user_investments')
-        .update({ earned_profit: newEarned })
+        .update({ 
+          earned_profit: updatedEarned,
+          last_claimed_at: nowIso
+        })
         .eq('id', item.id);
 
-      if (error) throw error;
+      if (updateInvErr) throw updateInvErr;
 
-      alert(`Sukses klaim profit harian +Rp ${addedProfit.toLocaleString('id-ID')}!`);
-      fetchInvestments();
+      // 5. Update state lokal
+      setInvestments((prev) =>
+        prev.map((inv) =>
+          inv.id === item.id 
+            ? { ...inv, earned_profit: updatedEarned, last_claimed_at: nowIso } 
+            : inv
+        )
+      );
+
+      setAlertConfig({
+        isOpen: true,
+        type: 'success',
+        title: 'Profit Berhasil Diklaim!',
+        message: `Klaim untuk ${claimableHours} jam sebesar Rp ${claimableAmount.toLocaleString('id-ID')} berhasil dicairkan ke saldo utama.`,
+      });
     } catch (err) {
-      alert('Gagal klaim profit: ' + err.message);
+      console.error('Gagal klaim profit:', err.message);
+      setAlertConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Klaim Gagal',
+        message: err.message || 'Terjadi gangguan jaringan saat klaim profit.',
+      });
+    } finally {
+      setProcessingId(null);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="py-16 flex flex-col items-center justify-center text-slate-400 gap-2 bg-white rounded-2xl border border-slate-100 shadow-sm mt-1">
-        <Loader2 className="animate-spin text-[#E5A93C]" size={24} />
-        <p className="text-xs font-medium">Memuat portofolio investasi...</p>
-      </div>
-    );
-  }
-
-  if (errorMsg) {
-    return (
-      <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center gap-2.5 text-xs mt-1">
-        <AlertCircle size={18} />
-        <span>{errorMsg}</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-3 pt-1">
-      {/* Ringkasan Modal & Hasil */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 grid grid-cols-2 gap-3">
-        <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400">Modal Berjalan</span>
-          <p className="text-sm font-black text-[#0B1528] mt-0.5">
-            Rp {totalInvested.toLocaleString('id-ID')}
-          </p>
+    <div className="space-y-4 pb-6">
+      <AlertModal
+        isOpen={alertConfig.isOpen}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => {
+          setAlertConfig((prev) => ({ ...prev, isOpen: false }));
+          if (alertConfig.type === 'success') {
+            window.location.reload();
+          }
+        }}
+      />
+
+      {/* Ringkasan Portofolio */}
+      <div className="bg-[#0B1528] text-white rounded-3xl p-5 shadow-lg border border-slate-800 space-y-4 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-[#E5A93C]/10 rounded-full blur-2xl pointer-events-none" />
+        
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">
+              Total Nilai Portofolio
+            </span>
+            <h2 className="text-2xl font-black text-[#E5A93C] tracking-tight mt-0.5">
+              Rp {totalNilaiPortofolio.toLocaleString('id-ID')}
+            </h2>
+          </div>
+          <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-[#E5A93C]">
+            <PieChart size={20} />
+          </div>
         </div>
-        <div>
-          <span className="text-[10px] uppercase font-bold text-slate-400">Total Profit Masuk</span>
-          <p className="text-sm font-black text-emerald-600 mt-0.5">
-            +Rp {totalEarned.toLocaleString('id-ID')}
-          </p>
+
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-white/10">
+          <div>
+            <span className="text-[9px] text-slate-400 block font-medium">Modal Aktif</span>
+            <span className="text-xs font-bold text-slate-200">
+              Rp {totalModalAktif.toLocaleString('id-ID')}
+            </span>
+          </div>
+          <div>
+            <span className="text-[9px] text-slate-400 block font-medium">Rate Harian</span>
+            <span className="text-xs font-bold text-emerald-400">
+              35% / 24 Jam (~1.46%/jam)
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Daftar Kontrak Aktif */}
-      <div className="space-y-3">
-        {items.length === 0 ? (
-          <div className="text-center py-10 text-xs text-slate-400 bg-white rounded-2xl border border-slate-100">
-            Belum ada paket investasi aktif.
+      {loading && (
+        <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2 bg-white rounded-3xl border border-slate-100 shadow-sm">
+          <Loader2 className="animate-spin text-[#E5A93C]" size={22} />
+          <span className="text-xs">Memuat daftar kontrak...</span>
+        </div>
+      )}
+
+      {!loading && investments.length === 0 && (
+        <div className="text-center py-10 px-4 bg-white rounded-3xl border border-slate-100 space-y-2">
+          <AlertCircle className="mx-auto text-slate-300" size={32} />
+          <p className="text-xs font-bold text-slate-700">Belum Ada Investasi Aktif</p>
+          <p className="text-[10px] text-slate-400">
+            Pilih paket likuiditas di menu Market untuk mulai menghasilkan profit per jam.
+          </p>
+        </div>
+      )}
+
+      {!loading && investments.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Kontrak Berjalan ({investments.length})
+            </h3>
+            <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
+              <ShieldCheck size={12} /> Profit Per Jam Aktif
+            </span>
           </div>
-        ) : (
-          items.map((item) => {
-            const progressPercent = Math.min(
-              100,
-              Math.max(
-                0,
-                Math.round(((item.totalDays - item.daysRemaining) / item.totalDays) * 100)
-              )
-            );
+
+          {investments.map((item) => {
+            const { hourlyProfit, claimableHours, claimableAmount, minutesLeft, canClaim } = calculateClaimable(item);
+            const dailyEstimated = Math.floor(Number(item.invested_amount || 0) * 0.35);
 
             return (
               <div
                 key={item.id}
-                className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 space-y-3"
+                className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 space-y-3"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between border-b border-slate-50 pb-2.5">
                   <div>
-                    <h3 className="text-xs font-bold text-slate-800">{item.title}</h3>
-                    <span className="text-[10px] text-slate-400">
-                      Modal: Rp {item.investedAmount.toLocaleString('id-ID')}
+                    <h4 className="font-extrabold text-xs text-[#0B1528]">{item.title}</h4>
+                    <span className="text-[9px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold uppercase">
+                      {item.status || 'Aktif'}
                     </span>
                   </div>
-                  <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <CheckCircle2 size={11} /> {item.status}
-                  </span>
-                </div>
-
-                {/* Progress Hari */}
-                <div>
-                  <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-                    <span className="flex items-center gap-1">
-                      <Clock size={11} /> Sisa {item.daysRemaining} hari lagi
+                  <div className="text-right">
+                    <span className="text-[10px] text-slate-400 block">Modal Sewa</span>
+                    <span className="text-xs font-black text-slate-800">
+                      Rp {Number(item.invested_amount).toLocaleString('id-ID')}
                     </span>
-                    <span>{progressPercent}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[#E5A93C] rounded-full transition-all duration-300"
-                      style={{ width: `${progressPercent}%` }}
-                    />
                   </div>
                 </div>
 
-                {/* Rincian Profit & Tombol Klaim */}
-                <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-2xl text-center">
                   <div>
-                    <span className="text-[10px] text-slate-400 block">Profit Dihasilkan</span>
-                    <span className="text-xs font-black text-emerald-600">
-                      +Rp {item.earnedProfit.toLocaleString('id-ID')}
+                    <span className="text-[8px] text-slate-400 block">Per Jam</span>
+                    <span className="text-[10px] font-bold text-slate-700">
+                      +Rp {hourlyProfit.toLocaleString('id-ID')}
                     </span>
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-slate-400 block">Per 24 Jam (35%)</span>
+                    <span className="text-[10px] font-bold text-emerald-600">
+                      +Rp {dailyEstimated.toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[8px] text-slate-400 block">Total Dicairkan</span>
+                    <span className="text-[10px] font-bold text-[#E5A93C]">
+                      Rp {Number(item.earned_profit || 0).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <div className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <Timer size={13} className="text-[#E5A93C]" />
+                    {canClaim ? (
+                      <span className="font-bold text-emerald-600">
+                        Tersedia: {claimableHours} Jam (+Rp {claimableAmount.toLocaleString('id-ID')})
+                      </span>
+                    ) : (
+                      <span>Rilis dalam: ±{minutesLeft} mnt</span>
+                    )}
                   </div>
 
                   <button
-                    onClick={() => handleClaim(item)}
-                    className="bg-[#0B1528] text-[#E5A93C] text-xs font-bold px-3 py-1.5 rounded-xl active:scale-95 transition-transform flex items-center gap-1"
+                    onClick={() => handleClaimProfit(item)}
+                    disabled={processingId === item.id}
+                    className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition-transform shadow-sm ${
+                      canClaim
+                        ? 'bg-[#0B1528] text-[#E5A93C]'
+                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                    }`}
                   >
-                    <ArrowUpRight size={14} /> Klaim Profit
+                    {processingId === item.id ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <TrendingUp size={13} />
+                    )}
+                    {canClaim ? `Klaim (${claimableHours}j)` : 'Menunggu Siklus'}
                   </button>
                 </div>
               </div>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </div>
   );
 }
