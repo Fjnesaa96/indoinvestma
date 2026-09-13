@@ -53,12 +53,11 @@ export default function App() {
     fetchUserProfile();
   }, []);
 
-  // Handler Sukses Deposit + Logging Mutasi
+  // Handler Sukses Deposit
   const handleDepositSuccess = async (nominal) => {
     if (!userProfile.id) return;
     const newBalance = userProfile.balance + nominal;
 
-    // 1. Update saldo di profiles
     const { error: profileErr } = await supabase
       .from('profiles')
       .update({ balance: newBalance })
@@ -74,7 +73,6 @@ export default function App() {
       return;
     }
 
-    // 2. Catat otomatis ke tabel transactions
     await supabase.from('transactions').insert([
       {
         type: 'deposit',
@@ -93,17 +91,17 @@ export default function App() {
     });
   };
 
-  // Handler Sukses Penarikan + Logging Mutasi
-  const handleWithdrawSuccess = async ({ nominal, bankName, accountNumber, accountName }) => {
+  // Handler Sukses Penarikan Dana (Biaya Admin 10%)
+  const handleWithdrawSuccess = async ({ nominal, fee, netAmount, bankName, accountNumber, accountName }) => {
     if (!userProfile.id) return;
 
     if (userProfile.balance < nominal) {
-      throw new Error('Saldo tidak mencukupi untuk penarikan ini.');
+      throw new Error('Saldo tidak mencukupi untuk jumlah penarikan ini.');
     }
 
     const newBalance = userProfile.balance - nominal;
 
-    // 1. Potong saldo di profiles
+    // 1. Potong saldo utama
     const { error: profileErr } = await supabase
       .from('profiles')
       .update({ balance: newBalance })
@@ -111,12 +109,12 @@ export default function App() {
 
     if (profileErr) throw profileErr;
 
-    // 2. Catat otomatis ke tabel transactions
+    // 2. Catat riwayat penarikan dengan detail potongan 10%
     await supabase.from('transactions').insert([
       {
         type: 'withdraw',
         amount: nominal,
-        description: `Penarikan ke ${bankName} (${accountNumber}) a.n ${accountName}`,
+        description: `Tarik ke ${bankName} (${accountNumber}) a.n ${accountName} (Fee 10%: Rp ${fee.toLocaleString('id-ID')}, Diterima: Rp ${netAmount.toLocaleString('id-ID')})`,
         status: 'success',
       },
     ]);
@@ -125,14 +123,14 @@ export default function App() {
     setAlertConfig({
       isOpen: true,
       type: 'success',
-      title: 'Penarikan Diajukan',
-      message: `Dana Rp ${nominal.toLocaleString('id-ID')} berhasil ditarik ke rekening ${bankName} (${accountNumber}) a.n ${accountName}.`,
+      title: 'Penarikan Berhasil Diajukan',
+      message: `Pengajuan penarikan Rp ${nominal.toLocaleString('id-ID')} diproses.\nPotongan fee 10%: Rp ${fee.toLocaleString('id-ID')}\nDana bersih ditransfer: Rp ${netAmount.toLocaleString('id-ID')}\nTujuan: ${bankName} (${accountNumber}).`,
     });
   };
 
   return (
     <div className="min-h-screen bg-[#F4F7FA] text-slate-800 pb-28 max-w-md mx-auto relative shadow-sm selection:bg-[#E5A93C] selection:text-white">
-      {/* Header & Balance Card */}
+      {/* Header & Kartu Saldo */}
       <header className="bg-[#0B1528] text-white px-5 pt-4 pb-6 rounded-b-[2rem] shadow-md">
         <Header onOpenCS={() => alert('Menghubungkan ke layanan CS IndoInvestma...')} />
         <BalanceCard
@@ -143,7 +141,7 @@ export default function App() {
         />
       </header>
 
-      {/* Main Content Tabs */}
+      {/* Navigasi Konten */}
       <main className="px-4 mt-3">
         {activeTab === 'beranda' && (
           <div className="space-y-4">
@@ -168,10 +166,10 @@ export default function App() {
         {activeTab === 'profil' && <Profil />}
       </main>
 
-      {/* Floating Bottom Navigation */}
+      {/* Floating Bottom Nav */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Modals & Popups */}
+      {/* Modals */}
       <DepositModal
         isOpen={isDepositOpen}
         onClose={() => setIsDepositOpen(false)}
