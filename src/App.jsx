@@ -6,26 +6,38 @@ import Market from './pages/Market';
 import Jaringan from './pages/Jaringan';
 import Portfolio from './pages/Portfolio';
 import Profil from './pages/Profil';
+import DepositModal from './components/modals/DepositModal';
+import AlertModal from './components/modals/AlertModal';
 import { supabase } from './lib/supabaseClient';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('beranda');
   const [userProfile, setUserProfile] = useState({
+    id: null,
     balance: 0,
     vip_level: 0,
+  });
+
+  const [isDepositOpen, setIsDepositOpen] = useState(false);
+  const [alertConfig, setAlertConfig] = useState({
+    isOpen: false,
+    type: 'success',
+    title: '',
+    message: '',
   });
 
   const fetchUserProfile = async () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('balance, vip_level')
+        .select('id, balance, vip_level')
         .limit(1)
         .single();
 
       if (error) throw error;
       if (data) {
         setUserProfile({
+          id: data.id,
           balance: Number(data.balance),
           vip_level: data.vip_level,
         });
@@ -39,20 +51,49 @@ export default function App() {
     fetchUserProfile();
   }, []);
 
+  const handleDepositSuccess = async (nominal) => {
+    if (!userProfile.id) return;
+
+    const newBalance = userProfile.balance + nominal;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', userProfile.id);
+
+    if (error) {
+      setAlertConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Deposit Gagal',
+        message: error.message,
+      });
+      return;
+    }
+
+    setUserProfile((prev) => ({ ...prev, balance: newBalance }));
+    setAlertConfig({
+      isOpen: true,
+      type: 'success',
+      title: 'Deposit Berhasil',
+      message: `Saldo sebesar Rp ${nominal.toLocaleString('id-ID')} berhasil ditambahkan ke akun Anda.`,
+    });
+  };
+
   return (
     <div className="min-h-screen bg-[#F4F7FA] text-slate-800 pb-28 max-w-md mx-auto relative shadow-sm selection:bg-[#E5A93C] selection:text-white">
-      {/* Header Statis Atas */}
+      {/* Header & Balance */}
       <header className="bg-[#0B1528] text-white px-5 pt-4 pb-6 rounded-b-[2rem] shadow-md">
         <Header onOpenCS={() => alert('Menghubungkan ke layanan CS IndoInvestma...')} />
         <BalanceCard
           balance={userProfile.balance}
           vipLevel={userProfile.vip_level}
-          onDeposit={() => alert('Fitur Deposit Saldo')}
+          onDeposit={() => setIsDepositOpen(true)}
           onWithdraw={() => alert('Fitur Penarikan Saldo')}
         />
       </header>
 
-      {/* Tampilan Konten Berdasarkan Tab */}
+      {/* Main Tabs */}
       <main className="px-4 mt-3">
         {activeTab === 'beranda' && (
           <div className="space-y-4">
@@ -79,6 +120,21 @@ export default function App() {
 
       {/* Floating Bottom Nav */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+
+      {/* Modals */}
+      <DepositModal
+        isOpen={isDepositOpen}
+        onClose={() => setIsDepositOpen(false)}
+        onDepositSuccess={handleDepositSuccess}
+      />
+
+      <AlertModal
+        isOpen={alertConfig.isOpen}
+        type={alertConfig.type}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
