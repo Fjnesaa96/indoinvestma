@@ -81,14 +81,14 @@ export default function Market() {
 
       const currentBalance = Number(profileData.balance || 0);
 
-      // 2. Validasi kecukupan saldo
+      // 2. Validasi saldo
       if (currentBalance < selectedProduct.price) {
         setIsConfirmOpen(false);
         setAlertConfig({
           isOpen: true,
           type: 'error',
           title: 'Saldo Tidak Mencukupi',
-          message: `Saldo aktif Anda: Rp ${currentBalance.toLocaleString('id-ID')}\nHarga paket: Rp ${selectedProduct.price.toLocaleString('id-ID')}\n\nSilakan lakukan deposit saldo terlebih dahulu untuk melanjutkan sewa.`,
+          message: `Saldo Anda: Rp ${currentBalance.toLocaleString('id-ID')}\nHarga paket: Rp ${selectedProduct.price.toLocaleString('id-ID')}\n\nSilakan isi saldo terlebih dahulu.`,
         });
         return;
       }
@@ -103,7 +103,7 @@ export default function Market() {
 
       if (deductErr) throw deductErr;
 
-      // 4. Tambah kontrak baru di tabel user_investments
+      // 4. Tambah kontrak ke tabel user_investments
       const { error: contractErr } = await supabase
         .from('user_investments')
         .insert([
@@ -120,12 +120,22 @@ export default function Market() {
 
       if (contractErr) throw contractErr;
 
+      // 5. Catat mutasi sewa ke tabel transactions
+      await supabase.from('transactions').insert([
+        {
+          type: 'invest',
+          amount: selectedProduct.price,
+          description: `Sewa ${selectedProduct.title}`,
+          status: 'success',
+        },
+      ]);
+
       setIsConfirmOpen(false);
       setAlertConfig({
         isOpen: true,
         type: 'success',
         title: 'Sewa Berhasil!',
-        message: `Paket "${selectedProduct.title}" aktif. Saldo Anda sekarang Rp ${newBalance.toLocaleString('id-ID')}.`,
+        message: `Paket "${selectedProduct.title}" aktif. Saldo Anda tersisa Rp ${newBalance.toLocaleString('id-ID')}.`,
       });
     } catch (err) {
       console.error('Transaksi gagal:', err.message);
@@ -155,7 +165,7 @@ export default function Market() {
         title="Konfirmasi Sewa Paket"
         message={
           selectedProduct
-            ? `Sewa "${selectedProduct.title}" seharga Rp ${selectedProduct.price.toLocaleString('id-ID')} dengan estimasi profit Rp ${selectedProduct.dailyProfit.toLocaleString('id-ID')} / hari?`
+            ? `Sewa "${selectedProduct.title}" seharga Rp ${selectedProduct.price.toLocaleString('id-ID')} dengan profit Rp ${selectedProduct.dailyProfit.toLocaleString('id-ID')} / hari?`
             : ''
         }
         onConfirm={executeInvestment}
@@ -163,7 +173,7 @@ export default function Market() {
         loading={isProcessing}
       />
 
-      {/* Modal Dialog Peringatan / Sukses Kustom */}
+      {/* Modal Dialog Status Kustom */}
       <AlertModal
         isOpen={alertConfig.isOpen}
         type={alertConfig.type}

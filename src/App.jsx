@@ -53,17 +53,36 @@ export default function App() {
     fetchUserProfile();
   }, []);
 
-  // Handler Sukses Deposit
+  // Handler Sukses Deposit + Logging Mutasi
   const handleDepositSuccess = async (nominal) => {
     if (!userProfile.id) return;
     const newBalance = userProfile.balance + nominal;
 
-    const { error } = await supabase
+    // 1. Update saldo di profiles
+    const { error: profileErr } = await supabase
       .from('profiles')
       .update({ balance: newBalance })
       .eq('id', userProfile.id);
 
-    if (error) throw error;
+    if (profileErr) {
+      setAlertConfig({
+        isOpen: true,
+        type: 'error',
+        title: 'Deposit Gagal',
+        message: profileErr.message,
+      });
+      return;
+    }
+
+    // 2. Catat otomatis ke tabel transactions
+    await supabase.from('transactions').insert([
+      {
+        type: 'deposit',
+        amount: nominal,
+        description: 'Top up saldo akun via Transfer Instant',
+        status: 'success',
+      },
+    ]);
 
     setUserProfile((prev) => ({ ...prev, balance: newBalance }));
     setAlertConfig({
@@ -74,7 +93,7 @@ export default function App() {
     });
   };
 
-  // Handler Sukses Penarikan (Withdraw)
+  // Handler Sukses Penarikan + Logging Mutasi
   const handleWithdrawSuccess = async ({ nominal, bankName, accountNumber, accountName }) => {
     if (!userProfile.id) return;
 
@@ -84,12 +103,23 @@ export default function App() {
 
     const newBalance = userProfile.balance - nominal;
 
-    const { error } = await supabase
+    // 1. Potong saldo di profiles
+    const { error: profileErr } = await supabase
       .from('profiles')
       .update({ balance: newBalance })
       .eq('id', userProfile.id);
 
-    if (error) throw error;
+    if (profileErr) throw profileErr;
+
+    // 2. Catat otomatis ke tabel transactions
+    await supabase.from('transactions').insert([
+      {
+        type: 'withdraw',
+        amount: nominal,
+        description: `Penarikan ke ${bankName} (${accountNumber}) a.n ${accountName}`,
+        status: 'success',
+      },
+    ]);
 
     setUserProfile((prev) => ({ ...prev, balance: newBalance }));
     setAlertConfig({
