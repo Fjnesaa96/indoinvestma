@@ -7,6 +7,7 @@ import Jaringan from './pages/Jaringan';
 import Portfolio from './pages/Portfolio';
 import Profil from './pages/Profil';
 import DepositModal from './components/modals/DepositModal';
+import WithdrawModal from './components/modals/WithdrawModal';
 import AlertModal from './components/modals/AlertModal';
 import { supabase } from './lib/supabaseClient';
 
@@ -19,6 +20,7 @@ export default function App() {
   });
 
   const [isDepositOpen, setIsDepositOpen] = useState(false);
+  const [isWithdrawOpen, setIsWithdrawOpen] = useState(false);
   const [alertConfig, setAlertConfig] = useState({
     isOpen: false,
     type: 'success',
@@ -51,9 +53,9 @@ export default function App() {
     fetchUserProfile();
   }, []);
 
+  // Handler Sukses Deposit
   const handleDepositSuccess = async (nominal) => {
     if (!userProfile.id) return;
-
     const newBalance = userProfile.balance + nominal;
 
     const { error } = await supabase
@@ -61,39 +63,57 @@ export default function App() {
       .update({ balance: newBalance })
       .eq('id', userProfile.id);
 
-    if (error) {
-      setAlertConfig({
-        isOpen: true,
-        type: 'error',
-        title: 'Deposit Gagal',
-        message: error.message,
-      });
-      return;
-    }
+    if (error) throw error;
 
     setUserProfile((prev) => ({ ...prev, balance: newBalance }));
     setAlertConfig({
       isOpen: true,
       type: 'success',
       title: 'Deposit Berhasil',
-      message: `Saldo sebesar Rp ${nominal.toLocaleString('id-ID')} berhasil ditambahkan ke akun Anda.`,
+      message: `Saldo sebesar Rp ${nominal.toLocaleString('id-ID')} berhasil ditambahkan.`,
+    });
+  };
+
+  // Handler Sukses Penarikan (Withdraw)
+  const handleWithdrawSuccess = async ({ nominal, bankName, accountNumber, accountName }) => {
+    if (!userProfile.id) return;
+
+    if (userProfile.balance < nominal) {
+      throw new Error('Saldo tidak mencukupi untuk penarikan ini.');
+    }
+
+    const newBalance = userProfile.balance - nominal;
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', userProfile.id);
+
+    if (error) throw error;
+
+    setUserProfile((prev) => ({ ...prev, balance: newBalance }));
+    setAlertConfig({
+      isOpen: true,
+      type: 'success',
+      title: 'Penarikan Diajukan',
+      message: `Dana Rp ${nominal.toLocaleString('id-ID')} berhasil ditarik ke rekening ${bankName} (${accountNumber}) a.n ${accountName}.`,
     });
   };
 
   return (
     <div className="min-h-screen bg-[#F4F7FA] text-slate-800 pb-28 max-w-md mx-auto relative shadow-sm selection:bg-[#E5A93C] selection:text-white">
-      {/* Header & Balance */}
+      {/* Header & Balance Card */}
       <header className="bg-[#0B1528] text-white px-5 pt-4 pb-6 rounded-b-[2rem] shadow-md">
         <Header onOpenCS={() => alert('Menghubungkan ke layanan CS IndoInvestma...')} />
         <BalanceCard
           balance={userProfile.balance}
           vipLevel={userProfile.vip_level}
           onDeposit={() => setIsDepositOpen(true)}
-          onWithdraw={() => alert('Fitur Penarikan Saldo')}
+          onWithdraw={() => setIsWithdrawOpen(true)}
         />
       </header>
 
-      {/* Main Tabs */}
+      {/* Main Content Tabs */}
       <main className="px-4 mt-3">
         {activeTab === 'beranda' && (
           <div className="space-y-4">
@@ -118,14 +138,21 @@ export default function App() {
         {activeTab === 'profil' && <Profil />}
       </main>
 
-      {/* Floating Bottom Nav */}
+      {/* Floating Bottom Navigation */}
       <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Modals */}
+      {/* Modals & Popups */}
       <DepositModal
         isOpen={isDepositOpen}
         onClose={() => setIsDepositOpen(false)}
         onDepositSuccess={handleDepositSuccess}
+      />
+
+      <WithdrawModal
+        isOpen={isWithdrawOpen}
+        onClose={() => setIsWithdrawOpen(false)}
+        currentBalance={userProfile.balance}
+        onWithdrawSuccess={handleWithdrawSuccess}
       />
 
       <AlertModal
